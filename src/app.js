@@ -1,4 +1,5 @@
 const STORAGE_KEY = 'process-map-editor:data:v1';
+const THEME_KEY = 'process-map-editor:theme:v1';
 
 const state = {
   data: loadData(),
@@ -6,6 +7,7 @@ const state = {
   selectedProcessId: null,
   selectedSubprocessId: null,
   selectedNodeId: null,
+  theme: localStorage.getItem(THEME_KEY) || 'light',
   dirty: false,
 };
 
@@ -78,6 +80,7 @@ function setView(view) {
 }
 
 function render() {
+  document.body.dataset.theme = state.theme;
   app.innerHTML = '';
   app.appendChild(renderShell());
   const main = document.querySelector('main');
@@ -100,6 +103,7 @@ function renderShell() {
         <button data-view="systems">Системы</button>
       </nav>
       <div class="actions">
+        <button data-toggle-theme>${state.theme === 'dark' ? 'Светлая тема' : 'Темная тема'}</button>
         <button data-import>Импорт</button>
         <button data-export>Экспорт</button>
         <button data-reset>Сброс</button>
@@ -122,6 +126,11 @@ function renderShell() {
     btn.addEventListener('click', () => setView(btn.dataset.view));
   });
   wrap.querySelector('[data-save]').addEventListener('click', saveData);
+  wrap.querySelector('[data-toggle-theme]').addEventListener('click', () => {
+    state.theme = state.theme === 'dark' ? 'light' : 'dark';
+    localStorage.setItem(THEME_KEY, state.theme);
+    render();
+  });
   wrap.querySelector('[data-reset]').addEventListener('click', () => {
     if (!confirm('Сбросить карту к исходным данным из присланных HTML?')) return;
     state.data = clone(window.PROCESS_MAP_SEED);
@@ -167,7 +176,9 @@ function importJson(ev) {
 function renderDiagram(main) {
   const wrap = el('<div class="workbench"><section class="canvas panel"></section><aside class="side panel"></aside></div>');
   const canvas = wrap.querySelector('.canvas');
-  canvas.appendChild(el(`<h1>${esc(state.data.title)}</h1>`));
+  const title = el(`<div class="section-head"><h1>${esc(state.data.title)}</h1><button data-add-process>Добавить процесс</button></div>`);
+  title.querySelector('[data-add-process]').addEventListener('click', addProcess);
+  canvas.appendChild(title);
   canvas.appendChild(renderFlow());
   const grid = el('<div class="process-grid"></div>');
   state.data.processes.forEach((process, index) => {
@@ -216,6 +227,10 @@ function renderInspector(side) {
     return;
   }
   side.appendChild(el(`<h2>${esc(process.number)}. ${esc(process.title)}</h2>`));
+  const controls = el('<div class="button-row"><button data-add-sub>Добавить подпроцесс</button><button class="danger" data-delete-process>Удалить процесс</button></div>');
+  controls.querySelector('[data-add-sub]').addEventListener('click', () => addSubprocess(process.id));
+  controls.querySelector('[data-delete-process]').addEventListener('click', () => deleteProcess(process.id));
+  side.appendChild(controls);
   side.appendChild(field('Название', process.title, (v) => { process.title = v; }));
   side.appendChild(field('Цель', process.goal, (v) => { process.goal = v; }, 3));
   side.appendChild(field('Среднее время', process.avgTime, (v) => { process.avgTime = v; }, 2));
@@ -233,6 +248,12 @@ function renderInspector(side) {
 }
 
 function renderSubprocessEditor(parent, sub) {
+  const owner = selectedProcess();
+  const controls = el('<div class="button-row"><button class="danger" data-delete-sub>Удалить подпроцесс</button></div>');
+  controls.querySelector('[data-delete-sub]').addEventListener('click', () => {
+    if (owner) deleteSubprocess(owner.id, sub.id);
+  });
+  parent.appendChild(controls);
   parent.appendChild(field('Название', sub.title, (v) => { sub.title = v; }));
   parent.appendChild(field('Шаги, каждый с новой строки', (sub.steps || []).join('\n'), (v) => {
     sub.steps = v.split('\n').map((x) => x.trim()).filter(Boolean);
@@ -246,13 +267,14 @@ function renderSubprocessEditor(parent, sub) {
 
 function renderTables(main) {
   const wrap = el('<div class="tables"></div>');
-  wrap.appendChild(tablePanel('Процессы', ['№', 'Название', 'Цель', 'Время', 'Слабые места', 'Рост'], processRows()));
-  wrap.appendChild(tablePanel('Подпроцессы', ['ID', 'Процесс', 'Название', 'Шаги', 'Результат', 'Время', 'Слабое место', 'Оптимизация'], subprocessRows()));
+  wrap.appendChild(tablePanel('Процессы', ['№', 'Название', 'Цель', 'Время', 'Слабые места', 'Рост', ''], processRows(), addProcess));
+  wrap.appendChild(tablePanel('Подпроцессы', ['ID', 'Процесс', 'Название', 'Шаги', 'Результат', 'Время', 'Слабое место', 'Оптимизация', ''], subprocessRows(), () => addSubprocess(state.selectedProcessId || state.data.processes[0]?.id)));
   main.appendChild(wrap);
 }
 
-function tablePanel(title, headers, rows) {
-  const panel = el(`<section class="panel table-panel"><h2>${esc(title)}</h2><div class="table-scroll"><table><thead><tr></tr></thead><tbody></tbody></table></div></section>`);
+function tablePanel(title, headers, rows, onAdd) {
+  const panel = el(`<section class="panel table-panel"><div class="section-head"><h2>${esc(title)}</h2><button data-add>Добавить</button></div><div class="table-scroll"><table><thead><tr></tr></thead><tbody></tbody></table></div></section>`);
+  panel.querySelector('[data-add]').addEventListener('click', onAdd);
   headers.forEach((h) => panel.querySelector('tr').appendChild(el(`<th>${esc(h)}</th>`)));
   rows.forEach((row) => panel.querySelector('tbody').appendChild(row));
   return panel;
@@ -260,13 +282,14 @@ function tablePanel(title, headers, rows) {
 
 function processRows() {
   return state.data.processes.map((process, index) => {
-    const tr = el(`<tr><td>${process.number || index + 1}</td><td></td><td></td><td></td><td></td><td></td></tr>`);
+    const tr = el(`<tr><td>${process.number || index + 1}</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`);
     const cells = tr.querySelectorAll('td');
     cells[1].appendChild(compactInput(process.title, (v) => { process.title = v; }));
     cells[2].appendChild(compactInput(process.goal, (v) => { process.goal = v; }, 3));
     cells[3].appendChild(compactInput(process.avgTime, (v) => { process.avgTime = v; }, 3));
     cells[4].appendChild(compactInput(process.weaknesses, (v) => { process.weaknesses = v; }, 3));
     cells[5].appendChild(compactInput(process.growth, (v) => { process.growth = v; }, 3));
+    cells[6].appendChild(rowButton('Удалить', () => deleteProcess(process.id), 'danger'));
     return tr;
   });
 }
@@ -275,7 +298,7 @@ function subprocessRows() {
   const rows = [];
   state.data.processes.forEach((process) => {
     (process.subprocesses || []).forEach((sub) => {
-      const tr = el(`<tr><td>${esc(sub.id)}</td><td>${esc(process.title)}</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`);
+      const tr = el(`<tr><td>${esc(sub.id)}</td><td>${esc(process.title)}</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`);
       const cells = tr.querySelectorAll('td');
       cells[2].appendChild(compactInput(sub.title, (v) => { sub.title = v; }));
       cells[3].appendChild(compactInput((sub.steps || []).join('\n'), (v) => {
@@ -285,6 +308,7 @@ function subprocessRows() {
       cells[5].appendChild(compactInput(sub.time, (v) => { sub.time = v; }, 2));
       cells[6].appendChild(compactInput(sub.weakness, (v) => { sub.weakness = v; }, 2));
       cells[7].appendChild(compactInput(sub.optimization, (v) => { sub.optimization = v; }, 2));
+      cells[8].appendChild(rowButton('Удалить', () => deleteSubprocess(process.id, sub.id), 'danger'));
       rows.push(tr);
     });
   });
@@ -298,6 +322,145 @@ function compactInput(value, onInput, rows = 1) {
     markDirty();
   });
   return node;
+}
+
+function rowButton(label, onClick, className = '') {
+  const button = el(`<button class="row-action ${className}">${esc(label)}</button>`);
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+function selectField(label, options, value, onInput) {
+  const node = el(`<label class="field compact-field"><span>${esc(label)}</span><select></select></label>`);
+  const select = node.querySelector('select');
+  options.forEach((option) => {
+    const item = el(`<option value="${esc(option.id)}">${esc(option.t || option.title || option.id)}</option>`);
+    item.selected = option.id === value;
+    select.appendChild(item);
+  });
+  select.addEventListener('change', () => {
+    onInput(select.value);
+    markDirty();
+    render();
+  });
+  return node;
+}
+
+function edgeCreator(nodes) {
+  const box = el(`<div class="edge-create">
+    <strong>Новая связь</strong>
+    <label class="field compact-field"><span>Откуда</span><select data-from></select></label>
+    <label class="field compact-field"><span>Куда</span><select data-to></select></label>
+    <label class="field compact-field"><span>Метка</span><input data-label></label>
+    <button data-add-edge>Добавить связь</button>
+  </div>`);
+  const from = box.querySelector('[data-from]');
+  const to = box.querySelector('[data-to]');
+  nodes.forEach((node, index) => {
+    from.appendChild(el(`<option value="${esc(node.id)}">${esc(node.t || node.id)}</option>`));
+    const toOption = el(`<option value="${esc(node.id)}">${esc(node.t || node.id)}</option>`);
+    toOption.selected = index === 1;
+    to.appendChild(toOption);
+  });
+  box.querySelector('[data-add-edge]').addEventListener('click', () => addEdge(from.value, to.value, box.querySelector('[data-label]').value));
+  return box;
+}
+
+function nextNumber(items, field = 'number') {
+  return items.reduce((max, item) => Math.max(max, Number(item[field]) || 0), 0) + 1;
+}
+
+function uniqueId(base, used) {
+  let id = base;
+  let suffix = 2;
+  while (used.has(id)) {
+    id = `${base}-${suffix}`;
+    suffix += 1;
+  }
+  return id;
+}
+
+function normalizeProcesses() {
+  state.data.processes.forEach((process, index) => {
+    process.number = index + 1;
+    process.id = process.id || `p${index + 1}`;
+    (process.subprocesses || []).forEach((sub, subIndex) => {
+      sub.id = sub.id || `${index + 1}.${subIndex + 1}`;
+    });
+  });
+}
+
+function addProcess() {
+  const number = nextNumber(state.data.processes);
+  const used = new Set(state.data.processes.map((p) => p.id));
+  const process = {
+    id: uniqueId(`p${number}`, used),
+    number,
+    title: `Новый процесс ${number}`,
+    goal: '',
+    avgTime: '',
+    weaknesses: '',
+    growth: '',
+    owner: '',
+    status: 'черновик',
+    subprocesses: [],
+  };
+  state.data.processes.push(process);
+  state.selectedProcessId = process.id;
+  state.selectedSubprocessId = null;
+  markDirty();
+  render();
+}
+
+function deleteProcess(processId) {
+  const process = state.data.processes.find((item) => item.id === processId);
+  if (!process) return;
+  if (!confirm(`Удалить процесс «${process.title}» вместе с подпроцессами?`)) return;
+  state.data.processes = state.data.processes.filter((item) => item.id !== processId);
+  state.selectedProcessId = state.data.processes[0]?.id || null;
+  state.selectedSubprocessId = null;
+  normalizeProcesses();
+  markDirty();
+  render();
+}
+
+function addSubprocess(processId) {
+  const process = state.data.processes.find((item) => item.id === processId);
+  if (!process) {
+    addProcess();
+    return;
+  }
+  process.subprocesses ||= [];
+  const number = process.subprocesses.length + 1;
+  const prefix = process.number || state.data.processes.indexOf(process) + 1;
+  const sub = {
+    id: `${prefix}.${number}`,
+    title: `Новый подпроцесс ${number}`,
+    steps: [],
+    result: '',
+    time: '',
+    weakness: '',
+    optimization: '',
+    control: '',
+  };
+  process.subprocesses.push(sub);
+  state.selectedProcessId = process.id;
+  state.selectedSubprocessId = sub.id;
+  markDirty();
+  render();
+}
+
+function deleteSubprocess(processId, subprocessId) {
+  const process = state.data.processes.find((item) => item.id === processId);
+  if (!process) return;
+  const sub = (process.subprocesses || []).find((item) => item.id === subprocessId);
+  if (!sub) return;
+  if (!confirm(`Удалить подпроцесс «${sub.title}»?`)) return;
+  process.subprocesses = process.subprocesses.filter((item) => item.id !== subprocessId);
+  state.selectedProcessId = process.id;
+  state.selectedSubprocessId = null;
+  markDirty();
+  render();
 }
 
 function renderSystems(main) {
@@ -364,6 +527,11 @@ function drawSystemCanvas(canvas) {
 }
 
 function renderSystemSide(side) {
+  const nodes = state.data.systems?.nodes || [];
+  const edges = state.data.systems?.edges || [];
+  const top = el('<div class="button-row"><button data-add-node>Добавить узел</button></div>');
+  top.querySelector('[data-add-node]').addEventListener('click', addSystemNode);
+  side.appendChild(top);
   const node = selectedNode();
   if (!node) {
     side.appendChild(el('<div class="empty">Выберите узел системной карты. Узлы можно перетаскивать, связи редактируются в таблице ниже.</div>'));
@@ -374,13 +542,20 @@ function renderSystemSide(side) {
     side.appendChild(field('Описание', node.body, (v) => { node.body = v; }, 5));
     side.appendChild(field('Путь', node.path, (v) => { node.path = v; }, 2));
     side.appendChild(checkbox('Новый / рекомендованный узел', Boolean(node.new), (v) => { node.new = v ? 1 : 0; }));
+    const nodeControls = el('<div class="button-row"><button class="danger" data-delete-node>Удалить узел</button></div>');
+    nodeControls.querySelector('[data-delete-node]').addEventListener('click', () => deleteSystemNode(node.id));
+    side.appendChild(nodeControls);
   }
   side.appendChild(el('<h3>Связи</h3>'));
+  if (nodes.length >= 2) side.appendChild(edgeCreator(nodes));
   const list = el('<div class="edge-list"></div>');
-  (state.data.systems?.edges || []).forEach((edge) => {
+  edges.forEach((edge, index) => {
     const row = el(`<div class="edge-row"><b>${esc(edge.f)} → ${esc(edge.t)}</b></div>`);
+    row.appendChild(selectField('Откуда', nodes, edge.f, (v) => { edge.f = v; }));
+    row.appendChild(selectField('Куда', nodes, edge.t, (v) => { edge.t = v; }));
     row.appendChild(compactInput(edge.l || '', (v) => { edge.l = v; }));
     row.appendChild(checkbox('Новая связь', Boolean(edge.new), (v) => { edge.new = v ? 1 : 0; }));
+    row.appendChild(rowButton('Удалить связь', () => deleteEdge(index), 'danger'));
     list.appendChild(row);
   });
   side.appendChild(list);
@@ -396,6 +571,66 @@ function selectedSubprocess(process) {
 
 function selectedNode() {
   return (state.data.systems?.nodes || []).find((n) => n.id === state.selectedNodeId) || null;
+}
+
+function ensureSystems() {
+  state.data.systems ||= {};
+  state.data.systems.nodes ||= [];
+  state.data.systems.edges ||= [];
+  state.data.systems.stages ||= [];
+  return state.data.systems;
+}
+
+function addSystemNode() {
+  const systems = ensureSystems();
+  const used = new Set(systems.nodes.map((node) => node.id));
+  const id = uniqueId('node', used);
+  const node = {
+    id,
+    x: 90,
+    y: 90,
+    cat: 'control',
+    new: 1,
+    t: 'Новый узел',
+    s: 'описание',
+    stack: '',
+    path: '',
+    body: '',
+  };
+  systems.nodes.push(node);
+  state.selectedNodeId = node.id;
+  markDirty();
+  render();
+}
+
+function deleteSystemNode(nodeId) {
+  const systems = ensureSystems();
+  const node = systems.nodes.find((item) => item.id === nodeId);
+  if (!node) return;
+  if (!confirm(`Удалить узел «${node.t}» и все его связи?`)) return;
+  systems.nodes = systems.nodes.filter((item) => item.id !== nodeId);
+  systems.edges = systems.edges.filter((edge) => edge.f !== nodeId && edge.t !== nodeId);
+  state.selectedNodeId = systems.nodes[0]?.id || null;
+  markDirty();
+  render();
+}
+
+function addEdge(from, to, label) {
+  const systems = ensureSystems();
+  if (!from || !to || from === to) {
+    alert('Выберите два разных узла для связи.');
+    return;
+  }
+  systems.edges.push({ f: from, t: to, l: label || '', new: 1 });
+  markDirty();
+  render();
+}
+
+function deleteEdge(index) {
+  const systems = ensureSystems();
+  systems.edges.splice(index, 1);
+  markDirty();
+  render();
 }
 
 function color(index) {
