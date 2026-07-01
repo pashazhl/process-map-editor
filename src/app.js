@@ -4,6 +4,8 @@ const AUTHOR_KEY = 'process-map-editor:author:v1';
 
 const CANVAS_WIDTH = 2600;
 const CANVAS_HEIGHT = 1800;
+const PROCESS_CARD_WIDTH = 280;
+const PROCESS_CARD_HEIGHT = 170;
 
 const state = {
   data: loadData(),
@@ -191,9 +193,11 @@ function renderDiagram(main) {
     <button data-zoom-out>−</button>
     <button data-zoom-reset>Сбросить масштаб</button>
     <button data-zoom-in>+</button>
+    <button data-auto-layout>Авто-выравнивание</button>
     <button data-add-process>Добавить процесс</button>
   </div></div>`);
   title.querySelector('[data-add-process]').addEventListener('click', addProcess);
+  title.querySelector('[data-auto-layout]').addEventListener('click', autoLayoutProcesses);
   title.querySelector('[data-zoom-out]').addEventListener('click', () => setCanvasZoom(state.canvas.scale / 1.2));
   title.querySelector('[data-zoom-in]').addEventListener('click', () => setCanvasZoom(state.canvas.scale * 1.2));
   title.querySelector('[data-zoom-reset]').addEventListener('click', () => {
@@ -697,6 +701,22 @@ function addSubprocess(processId) {
   process.subprocesses.push(sub);
   state.selectedProcessId = process.id;
   state.selectedSubprocessId = sub.id;
+  markDirty();
+  render();
+}
+
+function autoLayoutProcesses() {
+  const columns = state.data.processes.length > 6 ? 4 : 3;
+  const gapX = PROCESS_CARD_WIDTH + 60;
+  const gapY = PROCESS_CARD_HEIGHT + 70;
+  state.data.processes
+    .slice()
+    .sort((a, b) => (Number(a.number) || 0) - (Number(b.number) || 0))
+    .forEach((process, index) => {
+      process.x = 80 + (index % columns) * gapX;
+      process.y = 80 + Math.floor(index / columns) * gapY;
+    });
+  state.canvas = { x: 40, y: 32, scale: 1 };
   markDirty();
   render();
 }
