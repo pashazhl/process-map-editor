@@ -16,8 +16,17 @@ const state = {
   theme: localStorage.getItem(THEME_KEY) || 'light',
   author: localStorage.getItem(AUTHOR_KEY) || 'Пользователь',
   canvas: { x: 40, y: 32, scale: 1 },
+  processFilter: 'all',
   dirty: false,
 };
+
+const PROCESS_FILTERS = [
+  { id: 'all', title: 'Все' },
+  { id: 'weaknesses', title: 'Узкие места' },
+  { id: 'no-owner', title: 'Без владельца' },
+  { id: 'automation', title: 'К автоматизации' },
+  { id: 'overdue', title: 'Просроченные' },
+];
 
 const app = document.getElementById('app');
 
@@ -100,6 +109,7 @@ function render() {
 
 function renderShell() {
   const totalSubprocesses = state.data.processes.reduce((sum, p) => sum + (p.subprocesses || []).length, 0);
+  const filteredCount = state.data.processes.filter(processMatchesFilter).length;
   const wrap = el(`<div>
     <header class="topbar">
       <div class="brand">
@@ -124,8 +134,9 @@ function renderShell() {
       <div><b>${totalSubprocesses}</b><span>подпроцесса</span></div>
       <div><b>${(state.data.systems?.nodes || []).length}</b><span>системных узла</span></div>
       <div><b>${(state.data.systems?.edges || []).length}</b><span>связей</span></div>
-      <p data-dirty>${state.dirty ? 'есть несохраненные изменения' : 'сохранено в этом браузере'}</p>
+      <p data-dirty>${state.dirty ? 'есть несохраненные изменения' : 'сохранено в этом браузере'} · ${filteredCount}/${state.data.processes.length} в представлении</p>
     </section>
+    <section class="view-filters"></section>
     <main></main>
     <input class="hidden" type="file" accept="application/json" data-file>
   </div>`);
@@ -152,6 +163,16 @@ function renderShell() {
   wrap.querySelector('[data-export]').addEventListener('click', exportJson);
   wrap.querySelector('[data-import]').addEventListener('click', () => wrap.querySelector('[data-file]').click());
   wrap.querySelector('[data-file]').addEventListener('change', importJson);
+  const filters = wrap.querySelector('.view-filters');
+  PROCESS_FILTERS.forEach((filter) => {
+    const button = el(`<button data-filter="${esc(filter.id)}">${esc(filter.title)}</button>`);
+    button.classList.toggle('active', state.processFilter === filter.id);
+    button.addEventListener('click', () => {
+      state.processFilter = filter.id;
+      render();
+    });
+    filters.appendChild(button);
+  });
   return wrap;
 }
 
@@ -218,14 +239,18 @@ function renderProcessCanvas() {
 
   state.data.processes.forEach((process, index) => {
     const commentsCount = countProcessComments(process);
+    const matchesFilter = processMatchesFilter(process);
     const card = el(`<button class="process-card process-node" style="left:${process.x || 0}px;top:${process.y || 0}px;--accent:${color(index)}">
       <span>${process.number || index + 1}</span>
       <strong>${esc(process.title)}</strong>
       <em>${esc(process.goal)}</em>
-      <small>${(process.subprocesses || []).length} подпроцесса · ${esc(process.avgTime || 'время не указано')}</small>
+      <small>${esc(processCardMeta(process))}</small>
       ${commentsCount ? `<mark>${commentsCount} комм.</mark>` : ''}
     </button>`);
     card.classList.toggle('active', process.id === state.selectedProcessId);
+    card.classList.toggle('filter-match', state.processFilter !== 'all' && matchesFilter);
+    card.classList.toggle('filtered-out', state.processFilter !== 'all' && !matchesFilter);
+    card.classList.toggle('overdue', isOverdue(process));
     attachProcessDrag(card, process);
     card.addEventListener('click', (ev) => {
       if (card.dataset.dragged === '1') {
@@ -326,6 +351,35 @@ function countProcessComments(process) {
   return (process.comments || []).length + (process.subprocesses || []).reduce((sum, sub) => sum + (sub.comments || []).length, 0);
 }
 
+function processCardMeta(process) {
+  const chunks = [
+    `${(process.subprocesses || []).length} подпроцесса`,
+    process.owner ? `отв. ${process.owner}` : 'без владельца',
+    process.deadline ? `до ${process.deadline}` : 'без дедлайна',
+  ];
+  if (process.automation) chunks.push('к автоматизации');
+  return chunks.join(' · ');
+}
+
+function processMatchesFilter(process) {
+  if (state.processFilter === 'weaknesses') {
+    return Boolean((process.weaknesses || '').trim()) || (process.subprocesses || []).some((sub) => (sub.weakness || '').trim());
+  }
+  if (state.processFilter === 'no-owner') return !(process.owner || '').trim();
+  if (state.processFilter === 'automation') return Boolean(process.automation);
+  if (state.processFilter === 'overdue') return isOverdue(process);
+  return true;
+}
+
+function isOverdue(process) {
+  if (!process.deadline) return false;
+  const deadline = new Date(process.deadline + 'T23:59:59');
+  if (Number.isNaN(deadline.getTime())) return false;
+  const status = String(process.status || '').toLowerCase();
+  const done = ['готово', 'заверш', 'done', 'closed'].some((word) => status.includes(word));
+  return !done && deadline < new Date();
+}
+
 function renderInspector(side) {
   const process = selectedProcess();
   if (!process) {
@@ -352,6 +406,10 @@ function renderInspector(side) {
   side.appendChild(field('Среднее время', process.avgTime, (v) => { process.avgTime = v; }, 2));
   side.appendChild(field('Слабые места', process.weaknesses, (v) => { process.weaknesses = v; }, 3));
   side.appendChild(field('Зоны роста', process.growth, (v) => { process.growth = v; }, 3));
+  side.appendChild(field('Ответственный', process.owner, (v) => { process.owner = v; }));
+  side.appendChild(field('Статус', process.status, (v) => { process.status = v; }));
+  side.appendChild(field('Дедлайн', process.deadline, (v) => { process.deadline = v; }));
+  side.appendChild(checkbox('К автоматизации', Boolean(process.automation), (v) => { process.automation = v; }));
   side.appendChild(renderComments(process));
   side.appendChild(el('<h3>Подпроцессы</h3>'));
   (process.subprocesses || []).forEach((sub) => {
@@ -488,7 +546,7 @@ function formatDate(value) {
 
 function renderTables(main) {
   const wrap = el('<div class="tables"></div>');
-  wrap.appendChild(tablePanel('Процессы', ['№', 'Название', 'Цель', 'Время', 'Слабые места', 'Рост', ''], processRows(), addProcess));
+  wrap.appendChild(tablePanel('Процессы', ['№', 'Название', 'Цель', 'Время', 'Слабые места', 'Рост', 'Ответственный', 'Статус', 'Дедлайн', 'Авто', ''], processRows(), addProcess));
   wrap.appendChild(tablePanel('Подпроцессы', ['ID', 'Процесс', 'Название', 'Шаги', 'Результат', 'Время', 'Слабое место', 'Оптимизация', ''], subprocessRows(), () => addSubprocess(state.selectedProcessId || state.data.processes[0]?.id)));
   main.appendChild(wrap);
 }
@@ -503,14 +561,21 @@ function tablePanel(title, headers, rows, onAdd) {
 
 function processRows() {
   return state.data.processes.map((process, index) => {
-    const tr = el(`<tr><td>${process.number || index + 1}</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`);
+    const tr = el(`<tr><td>${process.number || index + 1}</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`);
+    tr.classList.toggle('filter-match', state.processFilter !== 'all' && processMatchesFilter(process));
+    tr.classList.toggle('filtered-out', state.processFilter !== 'all' && !processMatchesFilter(process));
+    tr.classList.toggle('overdue', isOverdue(process));
     const cells = tr.querySelectorAll('td');
     cells[1].appendChild(compactInput(process.title, (v) => { process.title = v; }));
     cells[2].appendChild(compactInput(process.goal, (v) => { process.goal = v; }, 3));
     cells[3].appendChild(compactInput(process.avgTime, (v) => { process.avgTime = v; }, 3));
     cells[4].appendChild(compactInput(process.weaknesses, (v) => { process.weaknesses = v; }, 3));
     cells[5].appendChild(compactInput(process.growth, (v) => { process.growth = v; }, 3));
-    cells[6].appendChild(rowButton('Удалить', () => deleteProcess(process.id), 'danger'));
+    cells[6].appendChild(compactInput(process.owner, (v) => { process.owner = v; }));
+    cells[7].appendChild(compactInput(process.status, (v) => { process.status = v; }));
+    cells[8].appendChild(compactInput(process.deadline, (v) => { process.deadline = v; }));
+    cells[9].appendChild(checkbox('Да', Boolean(process.automation), (v) => { process.automation = v; }));
+    cells[10].appendChild(rowButton('Удалить', () => deleteProcess(process.id), 'danger'));
     return tr;
   });
 }
@@ -607,6 +672,10 @@ function normalizeProcesses() {
     process.id = process.id || `p${index + 1}`;
     process.x = Number.isFinite(Number(process.x)) ? Number(process.x) : 80 + (index % 4) * 330;
     process.y = Number.isFinite(Number(process.y)) ? Number(process.y) : 80 + Math.floor(index / 4) * 230;
+    process.owner ||= '';
+    process.status ||= 'актуально';
+    process.deadline ||= '';
+    process.automation = Boolean(process.automation);
     process.comments ||= [];
     normalizeComments(process.comments);
     (process.subprocesses || []).forEach((sub, subIndex) => {
@@ -656,6 +725,8 @@ function addProcess() {
     growth: '',
     owner: '',
     status: 'черновик',
+    deadline: '',
+    automation: false,
     x: 80 + ((number - 1) % 4) * 330,
     y: 80 + Math.floor((number - 1) / 4) * 230,
     subprocesses: [],

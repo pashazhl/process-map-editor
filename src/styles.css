@@ -85,6 +85,26 @@ body[data-theme="dark"] .topbar { background: rgba(17, 24, 39, .94); }
 .summary b { display: block; font-size: 24px; line-height: 1; }
 .summary span, .summary p { color: var(--muted); }
 .summary p { align-self: center; justify-self: end; margin: 0; }
+.view-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 22px 0;
+}
+.view-filters button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--ink);
+  padding: 7px 11px;
+  font-weight: 800;
+}
+.view-filters button.active {
+  border-color: var(--brand);
+  background: color-mix(in srgb, var(--brand), transparent 86%);
+  color: var(--brand-dark);
+}
+body[data-theme="dark"] .view-filters button.active { color: var(--brand); }
 
 main { padding: 14px 22px 28px; }
 .panel {
@@ -236,6 +256,21 @@ body[data-theme="dark"] .process-viewport {
   font-size: 11px;
   font-weight: 800;
 }
+.process-card.filter-match, tr.filter-match {
+  outline: 3px solid color-mix(in srgb, var(--brand), transparent 64%);
+  outline-offset: 2px;
+}
+.process-card.filtered-out {
+  opacity: .36;
+  filter: grayscale(.35);
+}
+.process-card.overdue {
+  border-top-color: #dc2626;
+  background: color-mix(in srgb, #fee2e2, var(--panel) 72%);
+}
+body[data-theme="dark"] .process-card.overdue {
+  background: color-mix(in srgb, #7f1d1d, var(--panel) 72%);
+}
 body[data-theme="dark"] .process-card em { color: #c5cfdd; }
 
 .field { display: block; margin-bottom: 11px; }
@@ -345,6 +380,10 @@ th {
   font-size: 12px;
 }
 td:first-child { font-weight: 800; color: var(--muted); white-space: nowrap; }
+tr.filtered-out { opacity: .42; }
+tr.filter-match td { background: color-mix(in srgb, var(--brand), transparent 92%); }
+tr.overdue td { background: color-mix(in srgb, #fee2e2, transparent 38%); }
+body[data-theme="dark"] tr.overdue td { background: color-mix(in srgb, #7f1d1d, transparent 44%); }
 
 .systems { grid-template-columns: minmax(0, 1fr) 420px; }
 .system-canvas {
@@ -429,7 +468,7 @@ body[data-theme="dark"] .sys-node.new { background: #211c12; }
 
 @media (max-width: 680px) {
   .topbar, main { padding-left: 12px; padding-right: 12px; }
-  .summary { padding-left: 12px; padding-right: 12px; grid-template-columns: 1fr; }
+  .summary, .view-filters { padding-left: 12px; padding-right: 12px; grid-template-columns: 1fr; }
   .tabs, .actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .process-grid { grid-template-columns: 1fr; }
   .flow-step { flex-basis: 132px; font-size: 12px; }
