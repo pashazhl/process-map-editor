@@ -1,6 +1,8 @@
 const STORAGE_KEY = 'process-map-editor:data:v1';
 const THEME_KEY = 'process-map-editor:theme:v1';
 const AUTHOR_KEY = 'process-map-editor:author:v1';
+const VIEW_FILTER_KEY = 'process-map-editor:view-filter:v1';
+const VIEW_MODE_KEY = 'process-map-editor:view-mode:v1';
 
 const CANVAS_WIDTH = 2600;
 const CANVAS_HEIGHT = 1800;
@@ -16,7 +18,8 @@ const state = {
   theme: localStorage.getItem(THEME_KEY) || 'light',
   author: localStorage.getItem(AUTHOR_KEY) || 'Пользователь',
   canvas: { x: 40, y: 32, scale: 1 },
-  processFilter: 'all',
+  processFilter: localStorage.getItem(VIEW_FILTER_KEY) || 'all',
+  processFilterMode: localStorage.getItem(VIEW_MODE_KEY) || 'highlight',
   dirty: false,
 };
 
@@ -164,15 +167,30 @@ function renderShell() {
   wrap.querySelector('[data-import]').addEventListener('click', () => wrap.querySelector('[data-file]').click());
   wrap.querySelector('[data-file]').addEventListener('change', importJson);
   const filters = wrap.querySelector('.view-filters');
+  filters.appendChild(el(`<span class="view-filters-label">Представление</span>`));
   PROCESS_FILTERS.forEach((filter) => {
     const button = el(`<button data-filter="${esc(filter.id)}">${esc(filter.title)}</button>`);
     button.classList.toggle('active', state.processFilter === filter.id);
     button.addEventListener('click', () => {
       state.processFilter = filter.id;
+      localStorage.setItem(VIEW_FILTER_KEY, state.processFilter);
       render();
     });
     filters.appendChild(button);
   });
+  const modes = el(`<div class="view-mode">
+    <button data-view-mode="highlight">Подсветить</button>
+    <button data-view-mode="focus">Только подходящие</button>
+  </div>`);
+  modes.querySelectorAll('[data-view-mode]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.viewMode === state.processFilterMode);
+    button.addEventListener('click', () => {
+      state.processFilterMode = button.dataset.viewMode;
+      localStorage.setItem(VIEW_MODE_KEY, state.processFilterMode);
+      render();
+    });
+  });
+  filters.appendChild(modes);
   return wrap;
 }
 
@@ -240,6 +258,7 @@ function renderProcessCanvas() {
   state.data.processes.forEach((process, index) => {
     const commentsCount = countProcessComments(process);
     const matchesFilter = processMatchesFilter(process);
+    if (state.processFilter !== 'all' && state.processFilterMode === 'focus' && !matchesFilter) return;
     const card = el(`<button class="process-card process-node" style="left:${process.x || 0}px;top:${process.y || 0}px;--accent:${color(index)}">
       <span>${process.number || index + 1}</span>
       <strong>${esc(process.title)}</strong>
@@ -359,6 +378,12 @@ function processCardMeta(process) {
   ];
   if (process.automation) chunks.push('к автоматизации');
   return chunks.join(' · ');
+}
+
+function visibleProcesses() {
+  if (state.processFilter === 'all') return state.data.processes;
+  if (state.processFilterMode === 'focus') return state.data.processes.filter(processMatchesFilter);
+  return state.data.processes;
 }
 
 function processMatchesFilter(process) {
@@ -560,7 +585,7 @@ function tablePanel(title, headers, rows, onAdd) {
 }
 
 function processRows() {
-  return state.data.processes.map((process, index) => {
+  return visibleProcesses().map((process, index) => {
     const tr = el(`<tr><td>${process.number || index + 1}</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`);
     tr.classList.toggle('filter-match', state.processFilter !== 'all' && processMatchesFilter(process));
     tr.classList.toggle('filtered-out', state.processFilter !== 'all' && !processMatchesFilter(process));
@@ -582,7 +607,7 @@ function processRows() {
 
 function subprocessRows() {
   const rows = [];
-  state.data.processes.forEach((process) => {
+  visibleProcesses().forEach((process) => {
     (process.subprocesses || []).forEach((sub) => {
       const tr = el(`<tr><td>${esc(sub.id)}</td><td>${esc(process.title)}</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`);
       const cells = tr.querySelectorAll('td');
@@ -700,6 +725,14 @@ function normalizeData() {
   state.data.subtitle ||= '';
   state.data.flow ||= [];
   state.data.processes ||= [];
+  if (!PROCESS_FILTERS.some((filter) => filter.id === state.processFilter)) {
+    state.processFilter = 'all';
+    localStorage.setItem(VIEW_FILTER_KEY, state.processFilter);
+  }
+  if (!['highlight', 'focus'].includes(state.processFilterMode)) {
+    state.processFilterMode = 'highlight';
+    localStorage.setItem(VIEW_MODE_KEY, state.processFilterMode);
+  }
   normalizeProcesses();
   const systems = ensureSystems();
   systems.nodes.forEach((node) => {
