@@ -445,6 +445,10 @@ body[data-theme="dark"] tr.overdue td { background: color-mix(in srgb, #7f1d1d, 
   height: auto;
   overflow: hidden;
   resize: none;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  font-size: 14px;
+  line-height: 1.3;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

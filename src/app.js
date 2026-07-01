@@ -591,14 +591,14 @@ function processRows() {
     tr.classList.toggle('filtered-out', state.processFilter !== 'all' && !processMatchesFilter(process));
     tr.classList.toggle('overdue', isOverdue(process));
     const cells = tr.querySelectorAll('td');
-    cells[1].appendChild(compactInput(process.title, (v) => { process.title = v; }));
-    cells[2].appendChild(compactInput(process.goal, (v) => { process.goal = v; }, 3));
-    cells[3].appendChild(compactInput(process.avgTime, (v) => { process.avgTime = v; }, 3));
-    cells[4].appendChild(compactInput(process.weaknesses, (v) => { process.weaknesses = v; }, 3));
-    cells[5].appendChild(compactInput(process.growth, (v) => { process.growth = v; }, 3));
-    cells[6].appendChild(compactInput(process.owner, (v) => { process.owner = v; }));
-    cells[7].appendChild(compactInput(process.status, (v) => { process.status = v; }));
-    cells[8].appendChild(compactInput(process.deadline, (v) => { process.deadline = v; }));
+    cells[1].appendChild(compactInput(process.title, (v) => { process.title = v; }, 2, 16, 6));
+    cells[2].appendChild(compactInput(process.goal, (v) => { process.goal = v; }, 3, 18, 8));
+    cells[3].appendChild(compactInput(process.avgTime, (v) => { process.avgTime = v; }, 3, 18, 8));
+    cells[4].appendChild(compactInput(process.weaknesses, (v) => { process.weaknesses = v; }, 3, 18, 8));
+    cells[5].appendChild(compactInput(process.growth, (v) => { process.growth = v; }, 3, 18, 8));
+    cells[6].appendChild(compactInput(process.owner, (v) => { process.owner = v; }, 1, 18, 4));
+    cells[7].appendChild(compactInput(process.status, (v) => { process.status = v; }, 1, 18, 4));
+    cells[8].appendChild(compactInput(process.deadline, (v) => { process.deadline = v; }, 1, 18, 4));
     cells[9].appendChild(checkbox('Да', Boolean(process.automation), (v) => { process.automation = v; }));
     cells[10].appendChild(rowButton('Удалить', () => deleteProcess(process.id), 'danger'));
     return tr;
@@ -611,14 +611,14 @@ function subprocessRows() {
     (process.subprocesses || []).forEach((sub) => {
       const tr = el(`<tr><td>${esc(sub.id)}</td><td>${esc(process.title)}</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`);
       const cells = tr.querySelectorAll('td');
-      cells[2].appendChild(compactInput(sub.title, (v) => { sub.title = v; }));
+      cells[2].appendChild(compactInput(sub.title, (v) => { sub.title = v; }, 2, 16, 6));
       cells[3].appendChild(compactInput((sub.steps || []).join('\n'), (v) => {
         sub.steps = v.split('\n').map((x) => x.trim()).filter(Boolean);
-      }, 5));
-      cells[4].appendChild(compactInput(sub.result, (v) => { sub.result = v; }, 2));
-      cells[5].appendChild(compactInput(sub.time, (v) => { sub.time = v; }, 2));
-      cells[6].appendChild(compactInput(sub.weakness, (v) => { sub.weakness = v; }, 2));
-      cells[7].appendChild(compactInput(sub.optimization, (v) => { sub.optimization = v; }, 2));
+      }, 5, 20, 10));
+      cells[4].appendChild(compactInput(sub.result, (v) => { sub.result = v; }, 2, 18, 6));
+      cells[5].appendChild(compactInput(sub.time, (v) => { sub.time = v; }, 2, 18, 6));
+      cells[6].appendChild(compactInput(sub.weakness, (v) => { sub.weakness = v; }, 2, 18, 6));
+      cells[7].appendChild(compactInput(sub.optimization, (v) => { sub.optimization = v; }, 2, 18, 6));
       cells[8].appendChild(rowButton('Удалить', () => deleteSubprocess(process.id, sub.id), 'danger'));
       rows.push(tr);
     });
@@ -632,7 +632,18 @@ function autoSizeField(node) {
   node.style.height = `${Math.max(node.scrollHeight, 48)}px`;
 }
 
-function compactInput(value, onInput, rows = 1) {
+function estimateInputRows(value, minRows = 1, charsPerLine = 18, maxRows = 8) {
+  const text = String(value || '');
+  const lines = text.split('\n');
+  const estimated = lines.reduce((total, line) => {
+    const units = Math.max(1, Math.ceil(line.trim().length / charsPerLine));
+    return total + units;
+  }, 0);
+  return Math.min(maxRows, Math.max(minRows, estimated));
+}
+
+function compactInput(value, onInput, minRows = 1, charsPerLine = 18, maxRows = 8) {
+  const rows = estimateInputRows(value, minRows, charsPerLine, maxRows);
   const node = el(`<textarea class="compact-textarea" rows="${rows}">${esc(value)}</textarea>`);
   requestAnimationFrame(() => autoSizeField(node));
   node.addEventListener('input', () => {
