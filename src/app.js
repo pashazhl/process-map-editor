@@ -1,6 +1,9 @@
 const STORAGE_KEY = 'process-map-editor:data:v1';
 const THEME_KEY = 'process-map-editor:theme:v1';
 
+const CANVAS_WIDTH = 2600;
+const CANVAS_HEIGHT = 1800;
+
 const state = {
   data: loadData(),
   view: 'diagram',
@@ -8,6 +11,7 @@ const state = {
   selectedSubprocessId: null,
   selectedNodeId: null,
   theme: localStorage.getItem(THEME_KEY) || 'light',
+  canvas: { x: 40, y: 32, scale: 1 },
   dirty: false,
 };
 
@@ -26,6 +30,7 @@ function loadData() {
 }
 
 function saveData() {
+  normalizeData();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data));
   state.dirty = false;
   render();
@@ -164,6 +169,10 @@ function importJson(ev) {
       const data = JSON.parse(reader.result);
       if (!Array.isArray(data.processes)) throw new Error('Нет массива processes');
       state.data = data;
+      normalizeData();
+      state.selectedProcessId = state.data.processes[0]?.id || null;
+      state.selectedSubprocessId = null;
+      state.selectedNodeId = state.data.systems?.nodes?.[0]?.id || null;
       state.dirty = true;
       saveData();
     } catch (err) {
@@ -176,29 +185,124 @@ function importJson(ev) {
 function renderDiagram(main) {
   const wrap = el('<div class="workbench"><section class="canvas panel"></section><aside class="side panel"></aside></div>');
   const canvas = wrap.querySelector('.canvas');
-  const title = el(`<div class="section-head"><h1>${esc(state.data.title)}</h1><button data-add-process>Добавить процесс</button></div>`);
+  const title = el(`<div class="section-head"><h1>${esc(state.data.title)}</h1><div class="button-row compact-actions">
+    <button data-zoom-out>−</button>
+    <button data-zoom-reset>Сбросить масштаб</button>
+    <button data-zoom-in>+</button>
+    <button data-add-process>Добавить процесс</button>
+  </div></div>`);
   title.querySelector('[data-add-process]').addEventListener('click', addProcess);
+  title.querySelector('[data-zoom-out]').addEventListener('click', () => setCanvasZoom(state.canvas.scale / 1.2));
+  title.querySelector('[data-zoom-in]').addEventListener('click', () => setCanvasZoom(state.canvas.scale * 1.2));
+  title.querySelector('[data-zoom-reset]').addEventListener('click', () => {
+    state.canvas = { x: 40, y: 32, scale: 1 };
+    render();
+  });
   canvas.appendChild(title);
-  canvas.appendChild(renderFlow());
-  const grid = el('<div class="process-grid"></div>');
+  canvas.appendChild(renderProcessCanvas());
+  renderInspector(wrap.querySelector('.side'));
+  main.appendChild(wrap);
+}
+
+function renderProcessCanvas() {
+  const viewport = el('<div class="process-viewport"><div class="process-plane"><svg class="process-links"></svg><div class="process-node-layer"></div></div></div>');
+  const plane = viewport.querySelector('.process-plane');
+  const layer = viewport.querySelector('.process-node-layer');
+  applyCanvasTransform(plane);
+
   state.data.processes.forEach((process, index) => {
-    const card = el(`<button class="process-card" style="--accent:${color(index)}">
+    const card = el(`<button class="process-card process-node" style="left:${process.x || 0}px;top:${process.y || 0}px;--accent:${color(index)}">
       <span>${process.number || index + 1}</span>
       <strong>${esc(process.title)}</strong>
       <em>${esc(process.goal)}</em>
       <small>${(process.subprocesses || []).length} подпроцесса · ${esc(process.avgTime || 'время не указано')}</small>
     </button>`);
     card.classList.toggle('active', process.id === state.selectedProcessId);
-    card.addEventListener('click', () => {
+    attachProcessDrag(card, process);
+    card.addEventListener('click', (ev) => {
+      if (card.dataset.dragged === '1') {
+        ev.preventDefault();
+        card.dataset.dragged = '0';
+        return;
+      }
       state.selectedProcessId = process.id;
       state.selectedSubprocessId = null;
       render();
     });
-    grid.appendChild(card);
+    layer.appendChild(card);
   });
-  canvas.appendChild(grid);
-  renderInspector(wrap.querySelector('.side'));
-  main.appendChild(wrap);
+  attachCanvasPan(viewport, plane);
+  return viewport;
+}
+
+function applyCanvasTransform(plane) {
+  plane.style.transform = `translate(${state.canvas.x}px, ${state.canvas.y}px) scale(${state.canvas.scale})`;
+}
+
+function setCanvasZoom(nextScale) {
+  state.canvas.scale = Math.min(1.8, Math.max(0.45, Number(nextScale) || 1));
+  render();
+}
+
+function attachCanvasPan(viewport, plane) {
+  let panning = false, startX = 0, startY = 0, originX = 0, originY = 0;
+  viewport.addEventListener('pointerdown', (ev) => {
+    if (ev.target.closest('.process-node')) return;
+    panning = true;
+    startX = ev.clientX;
+    startY = ev.clientY;
+    originX = state.canvas.x;
+    originY = state.canvas.y;
+    viewport.setPointerCapture(ev.pointerId);
+    viewport.classList.add('panning');
+  });
+  viewport.addEventListener('pointermove', (ev) => {
+    if (!panning) return;
+    state.canvas.x = originX + ev.clientX - startX;
+    state.canvas.y = originY + ev.clientY - startY;
+    applyCanvasTransform(plane);
+  });
+  viewport.addEventListener('pointerup', () => {
+    panning = false;
+    viewport.classList.remove('panning');
+  });
+  viewport.addEventListener('wheel', (ev) => {
+    ev.preventDefault();
+    const delta = ev.deltaY > 0 ? 0.92 : 1.08;
+    state.canvas.scale = Math.min(1.8, Math.max(0.45, state.canvas.scale * delta));
+    applyCanvasTransform(plane);
+  }, { passive: false });
+}
+
+function attachProcessDrag(card, process) {
+  let dragging = false, startX = 0, startY = 0, originX = 0, originY = 0, moved = false;
+  card.addEventListener('pointerdown', (ev) => {
+    dragging = true;
+    moved = false;
+    card.dataset.dragged = '0';
+    startX = ev.clientX;
+    startY = ev.clientY;
+    originX = process.x || 0;
+    originY = process.y || 0;
+    card.setPointerCapture(ev.pointerId);
+  });
+  card.addEventListener('pointermove', (ev) => {
+    if (!dragging) return;
+    const dx = (ev.clientX - startX) / state.canvas.scale;
+    const dy = (ev.clientY - startY) / state.canvas.scale;
+    if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+    process.x = Math.max(0, Math.round(originX + dx));
+    process.y = Math.max(0, Math.round(originY + dy));
+    card.style.left = process.x + 'px';
+    card.style.top = process.y + 'px';
+  });
+  card.addEventListener('pointerup', () => {
+    dragging = false;
+    if (moved) {
+      card.dataset.dragged = '1';
+      markDirty();
+    }
+  });
 }
 
 function renderFlow() {
@@ -384,10 +488,29 @@ function normalizeProcesses() {
   state.data.processes.forEach((process, index) => {
     process.number = index + 1;
     process.id = process.id || `p${index + 1}`;
+    process.x = Number.isFinite(Number(process.x)) ? Number(process.x) : 80 + (index % 4) * 330;
+    process.y = Number.isFinite(Number(process.y)) ? Number(process.y) : 80 + Math.floor(index / 4) * 230;
     (process.subprocesses || []).forEach((sub, subIndex) => {
       sub.id = sub.id || `${index + 1}.${subIndex + 1}`;
     });
   });
+}
+
+function normalizeData() {
+  state.data.title ||= 'Карта процессов';
+  state.data.subtitle ||= '';
+  state.data.flow ||= [];
+  state.data.processes ||= [];
+  normalizeProcesses();
+  const systems = ensureSystems();
+  systems.nodes.forEach((node) => {
+    node.id ||= uniqueId('node', new Set(systems.nodes.map((item) => item.id).filter(Boolean)));
+    node.x = Number(node.x) || 0;
+    node.y = Number(node.y) || 0;
+    node.cat ||= 'control';
+    node.t ||= node.id;
+  });
+  systems.edges = systems.edges.filter((edge) => edge.f && edge.t);
 }
 
 function addProcess() {
@@ -403,6 +526,8 @@ function addProcess() {
     growth: '',
     owner: '',
     status: 'черновик',
+    x: 80 + ((number - 1) % 4) * 330,
+    y: 80 + Math.floor((number - 1) / 4) * 230,
     subprocesses: [],
   };
   state.data.processes.push(process);
@@ -645,4 +770,5 @@ function categoryColor(category) {
   }[category] || '#64748b';
 }
 
+normalizeData();
 render();
