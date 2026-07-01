@@ -422,7 +422,7 @@ input:focus, textarea:focus, select:focus { outline: 3px solid color-mix(in srgb
 .table-panel { padding: 16px; }
 .table-panel h2 { font-size: 18px; }
 .table-scroll { overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
-table { width: 100%; min-width: 1080px; border-collapse: collapse; }
+table { width: max-content; min-width: 100%; border-collapse: collapse; table-layout: auto; }
 th, td { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 8px; vertical-align: top; }
 th:last-child, td:last-child { border-right: 0; }
 tr:last-child td { border-bottom: 0; }
@@ -436,6 +436,28 @@ th {
   font-size: 12px;
 }
 td:first-child { font-weight: 800; color: var(--muted); white-space: nowrap; }
+.table-panel table th:nth-child(1),
+.table-panel table td:nth-child(1) { min-width: 42px; }
+.table-panel table th:nth-child(2),
+.table-panel table td:nth-child(2) { min-width: 210px; }
+.table-panel table th:nth-child(3),
+.table-panel table td:nth-child(3),
+.table-panel table th:nth-child(4),
+.table-panel table td:nth-child(4),
+.table-panel table th:nth-child(5),
+.table-panel table td:nth-child(5),
+.table-panel table th:nth-child(6),
+.table-panel table td:nth-child(6) { min-width: 280px; }
+.table-panel table th:nth-child(7),
+.table-panel table td:nth-child(7),
+.table-panel table th:nth-child(8),
+.table-panel table td:nth-child(8),
+.table-panel table th:nth-child(9),
+.table-panel table td:nth-child(9) { min-width: 190px; }
+.table-panel table th:nth-child(10),
+.table-panel table td:nth-child(10) { min-width: 78px; }
+.table-panel table th:nth-child(11),
+.table-panel table td:nth-child(11) { min-width: 132px; }
 tr.filtered-out { opacity: .42; }
 tr.filter-match td { background: color-mix(in srgb, var(--brand), transparent 92%); }
 tr.overdue td { background: color-mix(in srgb, #fee2e2, transparent 38%); }
@@ -443,6 +465,7 @@ body[data-theme="dark"] tr.overdue td { background: color-mix(in srgb, #7f1d1d, 
 .table-scroll td textarea.compact-textarea {
   min-height: var(--control-height);
   height: auto;
+  width: 100%;
   overflow: hidden;
   resize: none;
   padding-top: 8px;
