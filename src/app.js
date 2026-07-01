@@ -1,5 +1,6 @@
 const STORAGE_KEY = 'process-map-editor:data:v1';
 const THEME_KEY = 'process-map-editor:theme:v1';
+const AUTHOR_KEY = 'process-map-editor:author:v1';
 
 const CANVAS_WIDTH = 2600;
 const CANVAS_HEIGHT = 1800;
@@ -11,6 +12,7 @@ const state = {
   selectedSubprocessId: null,
   selectedNodeId: null,
   theme: localStorage.getItem(THEME_KEY) || 'light',
+  author: localStorage.getItem(AUTHOR_KEY) || 'Пользователь',
   canvas: { x: 40, y: 32, scale: 1 },
   dirty: false,
 };
@@ -211,11 +213,13 @@ function renderProcessCanvas() {
   applyCanvasTransform(plane);
 
   state.data.processes.forEach((process, index) => {
+    const commentsCount = countProcessComments(process);
     const card = el(`<button class="process-card process-node" style="left:${process.x || 0}px;top:${process.y || 0}px;--accent:${color(index)}">
       <span>${process.number || index + 1}</span>
       <strong>${esc(process.title)}</strong>
       <em>${esc(process.goal)}</em>
       <small>${(process.subprocesses || []).length} подпроцесса · ${esc(process.avgTime || 'время не указано')}</small>
+      ${commentsCount ? `<mark>${commentsCount} комм.</mark>` : ''}
     </button>`);
     card.classList.toggle('active', process.id === state.selectedProcessId);
     attachProcessDrag(card, process);
@@ -314,6 +318,10 @@ function renderFlow() {
   return flow;
 }
 
+function countProcessComments(process) {
+  return (process.comments || []).length + (process.subprocesses || []).reduce((sum, sub) => sum + (sub.comments || []).length, 0);
+}
+
 function renderInspector(side) {
   const process = selectedProcess();
   if (!process) {
@@ -340,6 +348,7 @@ function renderInspector(side) {
   side.appendChild(field('Среднее время', process.avgTime, (v) => { process.avgTime = v; }, 2));
   side.appendChild(field('Слабые места', process.weaknesses, (v) => { process.weaknesses = v; }, 3));
   side.appendChild(field('Зоны роста', process.growth, (v) => { process.growth = v; }, 3));
+  side.appendChild(renderComments(process));
   side.appendChild(el('<h3>Подпроцессы</h3>'));
   (process.subprocesses || []).forEach((sub) => {
     const item = el(`<button class="sub-link">${esc(sub.id)} ${esc(sub.title)}</button>`);
@@ -367,6 +376,110 @@ function renderSubprocessEditor(parent, sub) {
   parent.appendChild(field('Слабое место', sub.weakness, (v) => { sub.weakness = v; }, 2));
   parent.appendChild(field('Оптимизация', sub.optimization, (v) => { sub.optimization = v; }, 2));
   parent.appendChild(field('Контроль', sub.control, (v) => { sub.control = v; }, 2));
+  parent.appendChild(renderComments(sub));
+}
+
+function renderComments(target) {
+  target.comments ||= [];
+  const box = el(`<section class="comments">
+    <div class="comments-head">
+      <h3>Комментарии</h3>
+      <span>${target.comments.length}</span>
+    </div>
+    <label class="field compact-field"><span>Автор</span><input data-comment-author value="${esc(state.author)}"></label>
+    <label class="field compact-field"><span>Тип</span><select data-comment-type>
+      <option value="комментарий">Комментарий</option>
+      <option value="проблема">Проблема</option>
+      <option value="идея">Идея</option>
+      <option value="автоматизация">Автоматизация</option>
+    </select></label>
+    <label class="field compact-field"><span>Текст</span><textarea data-comment-text rows="3"></textarea></label>
+    <button data-add-comment>Добавить комментарий</button>
+    <div class="comment-list"></div>
+  </section>`);
+  const author = box.querySelector('[data-comment-author]');
+  author.addEventListener('input', () => {
+    state.author = author.value.trim() || 'Пользователь';
+    localStorage.setItem(AUTHOR_KEY, state.author);
+  });
+  box.querySelector('[data-add-comment]').addEventListener('click', () => {
+    addComment(target, box.querySelector('[data-comment-text]').value, box.querySelector('[data-comment-type]').value);
+  });
+  const list = box.querySelector('.comment-list');
+  target.comments.forEach((comment) => list.appendChild(renderCommentItem(target, comment)));
+  return box;
+}
+
+function renderCommentItem(target, comment) {
+  const item = el(`<article class="comment-item ${comment.resolved ? 'resolved' : ''}">
+    <div class="comment-meta">
+      <b>${commentTypeLabel(comment.type)}</b>
+      <span>${esc(comment.author || 'Пользователь')} · ${formatDate(comment.createdAt)}</span>
+    </div>
+    <p>${esc(comment.text)}</p>
+    <div class="button-row comment-actions">
+      <label class="check"><input type="checkbox" ${comment.resolved ? 'checked' : ''} data-resolve-comment><span>Решено</span></label>
+      <button class="danger" data-delete-comment>Удалить</button>
+    </div>
+  </article>`);
+  item.querySelector('[data-resolve-comment]').addEventListener('change', (ev) => {
+    comment.resolved = ev.target.checked;
+    markDirty();
+    render();
+  });
+  item.querySelector('[data-delete-comment]').addEventListener('click', () => {
+    target.comments = (target.comments || []).filter((item) => item.id !== comment.id);
+    markDirty();
+    render();
+  });
+  return item;
+}
+
+function addComment(target, text, type) {
+  const value = text.trim();
+  if (!value) return;
+  target.comments ||= [];
+  target.comments.unshift({
+    id: uniqueId('комментарий-' + Date.now().toString(36), new Set(target.comments.map((comment) => comment.id))),
+    text: value,
+    type: normalizeCommentType(type),
+    author: state.author || 'Пользователь',
+    createdAt: new Date().toISOString(),
+    resolved: false,
+  });
+  markDirty();
+  render();
+}
+
+function commentTypeLabel(type) {
+  return {
+    'комментарий': 'Комментарий',
+    'проблема': 'Проблема',
+    'идея': 'Идея',
+    'автоматизация': 'Автоматизация',
+    comment: 'Комментарий',
+    problem: 'Проблема',
+    idea: 'Идея',
+    automation: 'Автоматизация',
+  }[type] || 'Комментарий';
+}
+
+function normalizeCommentType(type) {
+  return {
+    comment: 'комментарий',
+    problem: 'проблема',
+    idea: 'идея',
+    automation: 'автоматизация',
+    'комментарий': 'комментарий',
+    'проблема': 'проблема',
+    'идея': 'идея',
+    'автоматизация': 'автоматизация',
+  }[type] || 'комментарий';
+}
+
+function formatDate(value) {
+  if (!value) return 'без даты';
+  return new Date(value).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' });
 }
 
 function renderTables(main) {
@@ -490,9 +603,22 @@ function normalizeProcesses() {
     process.id = process.id || `p${index + 1}`;
     process.x = Number.isFinite(Number(process.x)) ? Number(process.x) : 80 + (index % 4) * 330;
     process.y = Number.isFinite(Number(process.y)) ? Number(process.y) : 80 + Math.floor(index / 4) * 230;
+    process.comments ||= [];
+    normalizeComments(process.comments);
     (process.subprocesses || []).forEach((sub, subIndex) => {
       sub.id = sub.id || `${index + 1}.${subIndex + 1}`;
+      sub.comments ||= [];
+      normalizeComments(sub.comments);
     });
+  });
+}
+
+function normalizeComments(comments) {
+  comments.forEach((comment) => {
+    comment.type = normalizeCommentType(comment.type);
+    comment.author ||= 'Пользователь';
+    comment.createdAt ||= new Date().toISOString();
+    comment.resolved = Boolean(comment.resolved);
   });
 }
 
