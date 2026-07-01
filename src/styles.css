@@ -312,7 +312,8 @@ input, textarea, select {
 }
 input:not([type="checkbox"]):not([type="file"]),
 select {
-  min-height: var(--control-height);
+  height: var(--control-height);
+  line-height: 1.2;
 }
 select { appearance: auto; }
 input:focus, textarea:focus, select:focus { outline: 3px solid color-mix(in srgb, var(--brand), transparent 70%); border-color: var(--brand); }
