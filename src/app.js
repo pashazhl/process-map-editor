@@ -632,6 +632,18 @@ function autoSizeField(node) {
   node.style.height = `${Math.max(node.scrollHeight, 48)}px`;
 }
 
+function autoSizeFieldWidth(node) {
+  if (!node || node.tagName !== 'TEXTAREA') return;
+  const text = String(node.value || '');
+  const words = text.split(/\s+/).filter(Boolean);
+  const longestWord = words.reduce((max, word) => Math.max(max, word.length), 0);
+  const longestLine = text.split('\n').reduce((max, line) => Math.max(max, line.length), 0);
+  const contentWidth = Math.max(14, Math.min(32, longestWord + 2));
+  const preferredWidth = Math.max(contentWidth, Math.min(40, longestLine + 2));
+  node.style.minWidth = `${contentWidth}ch`;
+  node.style.width = `${preferredWidth}ch`;
+}
+
 function estimateInputRows(value, minRows = 1, charsPerLine = 18, maxRows = 8) {
   const text = String(value || '');
   const lines = text.split('\n');
@@ -645,8 +657,12 @@ function estimateInputRows(value, minRows = 1, charsPerLine = 18, maxRows = 8) {
 function compactInput(value, onInput, minRows = 1, charsPerLine = 18, maxRows = 8) {
   const rows = estimateInputRows(value, minRows, charsPerLine, maxRows);
   const node = el(`<textarea class="compact-textarea" rows="${rows}">${esc(value)}</textarea>`);
-  requestAnimationFrame(() => autoSizeField(node));
+  requestAnimationFrame(() => {
+    autoSizeFieldWidth(node);
+    autoSizeField(node);
+  });
   node.addEventListener('input', () => {
+    autoSizeFieldWidth(node);
     autoSizeField(node);
     onInput(node.value);
     markDirty();
