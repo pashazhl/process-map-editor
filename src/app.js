@@ -77,7 +77,11 @@ function field(label, value, onInput, rows = 1) {
     : `<input id="${id}" value="${esc(value)}">`;
   const node = el(`<label class="field"><span>${esc(label)}</span>${input}</label>`);
   const control = node.querySelector('input, textarea');
+  if (control.tagName === 'TEXTAREA') {
+    requestAnimationFrame(() => autoSizeField(control));
+  }
   control.addEventListener('input', () => {
+    if (control.tagName === 'TEXTAREA') autoSizeField(control);
     onInput(control.value);
     markDirty();
   });

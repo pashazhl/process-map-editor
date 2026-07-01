@@ -342,6 +342,10 @@ select {
   padding-right: 34px;
 }
 input:focus, textarea:focus, select:focus { outline: 3px solid color-mix(in srgb, var(--brand), transparent 70%); border-color: var(--brand); }
+.field textarea {
+  min-height: 120px;
+  overflow: hidden;
+}
 .sub-link {
   display: block;
   width: 100%;
