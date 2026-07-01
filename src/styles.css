@@ -440,6 +440,14 @@ tr.filtered-out { opacity: .42; }
 tr.filter-match td { background: color-mix(in srgb, var(--brand), transparent 92%); }
 tr.overdue td { background: color-mix(in srgb, #fee2e2, transparent 38%); }
 body[data-theme="dark"] tr.overdue td { background: color-mix(in srgb, #7f1d1d, transparent 44%); }
+.table-scroll td textarea.compact-textarea {
+  min-height: var(--control-height);
+  height: auto;
+  overflow: hidden;
+  resize: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 
 .systems { grid-template-columns: minmax(0, 1fr) 420px; }
 .system-canvas {

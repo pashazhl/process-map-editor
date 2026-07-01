@@ -626,9 +626,17 @@ function subprocessRows() {
   return rows;
 }
 
+function autoSizeField(node) {
+  if (!node || node.tagName !== 'TEXTAREA') return;
+  node.style.height = 'auto';
+  node.style.height = `${Math.max(node.scrollHeight, 48)}px`;
+}
+
 function compactInput(value, onInput, rows = 1) {
-  const node = rows > 1 ? el(`<textarea rows="${rows}">${esc(value)}</textarea>`) : el(`<input value="${esc(value)}">`);
+  const node = el(`<textarea class="compact-textarea" rows="${rows}">${esc(value)}</textarea>`);
+  autoSizeField(node);
   node.addEventListener('input', () => {
+    autoSizeField(node);
     onInput(node.value);
     markDirty();
   });
