@@ -634,7 +634,7 @@ function autoSizeField(node) {
 
 function compactInput(value, onInput, rows = 1) {
   const node = el(`<textarea class="compact-textarea" rows="${rows}">${esc(value)}</textarea>`);
-  autoSizeField(node);
+  requestAnimationFrame(() => autoSizeField(node));
   node.addEventListener('input', () => {
     autoSizeField(node);
     onInput(node.value);
