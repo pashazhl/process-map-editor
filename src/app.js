@@ -21,7 +21,9 @@ const state = {
   processFilter: localStorage.getItem(VIEW_FILTER_KEY) || 'all',
   processFilterMode: localStorage.getItem(VIEW_MODE_KEY) || 'highlight',
   dirty: false,
+  lastSavedData: null,
 };
+state.lastSavedData = clone(state.data);
 
 const PROCESS_FILTERS = [
   { id: 'all', title: 'Все' },
@@ -47,7 +49,9 @@ function loadData() {
 
 function saveData() {
   normalizeData();
+  appendHistoryEntries();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data));
+  state.lastSavedData = clone(state.data);
   state.dirty = false;
   render();
 }
@@ -112,6 +116,7 @@ function render() {
   if (state.view === 'diagram') renderDiagram(main);
   if (state.view === 'table') renderTables(main);
   if (state.view === 'systems') renderSystems(main);
+  if (state.view === 'history') renderHistory(main);
 }
 
 function renderShell() {
@@ -127,6 +132,7 @@ function renderShell() {
         <button data-view="diagram">Диаграмма</button>
         <button data-view="table">Таблица</button>
         <button data-view="systems">Системы</button>
+        <button data-view="history">История</button>
       </nav>
       <div class="actions">
         <button data-toggle-theme>${state.theme === 'dark' ? 'Светлая тема' : 'Темная тема'}</button>
@@ -256,8 +262,10 @@ function renderDiagram(main) {
 function renderProcessCanvas() {
   const viewport = el('<div class="process-viewport"><div class="process-plane"><svg class="process-links"></svg><div class="process-node-layer"></div></div></div>');
   const plane = viewport.querySelector('.process-plane');
+  const links = viewport.querySelector('.process-links');
   const layer = viewport.querySelector('.process-node-layer');
   applyCanvasTransform(plane);
+  drawProcessLinks(links);
 
   state.data.processes.forEach((process, index) => {
     const commentsCount = countProcessComments(process);
@@ -274,7 +282,7 @@ function renderProcessCanvas() {
     card.classList.toggle('filter-match', state.processFilter !== 'all' && matchesFilter);
     card.classList.toggle('filtered-out', state.processFilter !== 'all' && !matchesFilter);
     card.classList.toggle('overdue', isOverdue(process));
-    attachProcessDrag(card, process);
+    attachProcessDrag(card, process, links);
     card.addEventListener('click', (ev) => {
       if (card.dataset.dragged === '1') {
         ev.preventDefault();
@@ -330,7 +338,7 @@ function attachCanvasPan(viewport, plane) {
   }, { passive: false });
 }
 
-function attachProcessDrag(card, process) {
+function attachProcessDrag(card, process, links) {
   let dragging = false, startX = 0, startY = 0, originX = 0, originY = 0, moved = false;
   card.addEventListener('pointerdown', (ev) => {
     dragging = true;
@@ -351,6 +359,7 @@ function attachProcessDrag(card, process) {
     process.y = Math.max(0, Math.round(originY + dy));
     card.style.left = process.x + 'px';
     card.style.top = process.y + 'px';
+    drawProcessLinks(links);
   });
   card.addEventListener('pointerup', () => {
     dragging = false;
@@ -409,6 +418,15 @@ function isOverdue(process) {
   return !done && deadline < new Date();
 }
 
+function isSubprocessOverdue(subprocess) {
+  if (!subprocess.deadline) return false;
+  const deadline = new Date(subprocess.deadline + 'T23:59:59');
+  if (Number.isNaN(deadline.getTime())) return false;
+  const status = String(subprocess.status || '').toLowerCase();
+  const done = ['готово', 'заверш', 'done', 'closed'].some((word) => status.includes(word));
+  return !done && deadline < new Date();
+}
+
 function renderInspector(side) {
   const process = selectedProcess();
   if (!process) {
@@ -439,7 +457,9 @@ function renderInspector(side) {
   side.appendChild(field('Статус', process.status, (v) => { process.status = v; }));
   side.appendChild(field('Дедлайн', process.deadline, (v) => { process.deadline = v; }));
   side.appendChild(checkbox('К автоматизации', Boolean(process.automation), (v) => { process.automation = v; }));
+  side.appendChild(renderProcessEdgeControls(process));
   side.appendChild(renderComments(process));
+  side.appendChild(renderProcessHistory(process.id));
   side.appendChild(el('<h3>Подпроцессы</h3>'));
   (process.subprocesses || []).forEach((sub) => {
     const item = el(`<button class="sub-link">${esc(sub.id)} ${esc(sub.title)}</button>`);
@@ -467,7 +487,22 @@ function renderSubprocessEditor(parent, sub) {
   parent.appendChild(field('Слабое место', sub.weakness, (v) => { sub.weakness = v; }, 2));
   parent.appendChild(field('Оптимизация', sub.optimization, (v) => { sub.optimization = v; }, 2));
   parent.appendChild(field('Контроль', sub.control, (v) => { sub.control = v; }, 2));
+  parent.appendChild(field('Ответственный', sub.owner, (v) => { sub.owner = v; }));
+  parent.appendChild(field('Статус', sub.status, (v) => { sub.status = v; }));
+  parent.appendChild(field('Дедлайн', sub.deadline, (v) => { sub.deadline = v; }));
   parent.appendChild(renderComments(sub));
+}
+
+function renderProcessHistory(processId) {
+  const box = el('<section class="history-preview"><div class="comments-head"><h3>История процесса</h3></div><div class="history-list compact-history"></div></section>');
+  const list = box.querySelector('.history-list');
+  const entries = (state.data.history || []).filter((entry) => (entry.relatedProcessIds || []).includes(processId)).slice(0, 8);
+  if (!entries.length) {
+    list.appendChild(el('<div class="empty compact-empty">Для процесса пока нет записей истории.</div>'));
+    return box;
+  }
+  entries.forEach((entry) => list.appendChild(renderHistoryItem(entry)));
+  return box;
 }
 
 function renderComments(target) {
@@ -526,6 +561,28 @@ function renderCommentItem(target, comment) {
   return item;
 }
 
+function renderHistoryItem(entry) {
+  const item = el(`<article class="history-item">
+    <div class="history-meta">
+      <b>${esc(historyActionLabel(entry))}</b>
+      <span>${esc(entry.author || 'Пользователь')} · ${formatDate(entry.createdAt)}</span>
+    </div>
+    <strong>${esc(entry.entityTitle)}: ${esc(entry.entityLabel)}</strong>
+    ${entry.field ? `<p class="history-field">${esc(entry.field)}</p>` : ''}
+    <div class="history-values">
+      <div><span>Было</span><p>${esc(entry.oldValue || '—')}</p></div>
+      <div><span>Стало</span><p>${esc(entry.newValue || '—')}</p></div>
+    </div>
+  </article>`);
+  return item;
+}
+
+function historyActionLabel(entry) {
+  if (entry.action === 'create') return 'Создание';
+  if (entry.action === 'delete') return 'Удаление';
+  return 'Изменение';
+}
+
 function addComment(target, text, type) {
   const value = text.trim();
   if (!value) return;
@@ -573,11 +630,191 @@ function formatDate(value) {
   return new Date(value).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' });
 }
 
+function snapshotForHistory(data) {
+  const cloneData = clone(data || {});
+  delete cloneData.history;
+  return cloneData;
+}
+
+function appendHistoryEntries() {
+  state.data.history ||= [];
+  const previous = snapshotForHistory(state.lastSavedData);
+  const current = snapshotForHistory(state.data);
+  const entries = buildHistoryEntries(previous, current);
+  if (!entries.length) return;
+  state.data.history = [...entries, ...(state.data.history || [])];
+}
+
+function buildHistoryEntries(previous, current) {
+  const entries = [];
+  diffCollection(entries, previous.processes || [], current.processes || [], {
+    entityType: 'process',
+    title: 'Процесс',
+    label: (item) => item.title || item.id,
+    relatedProcessIds: (item) => [item.id],
+    fields: [
+      ['title', 'Название'],
+      ['goal', 'Цель'],
+      ['avgTime', 'Среднее время'],
+      ['weaknesses', 'Слабые места'],
+      ['growth', 'Зоны роста'],
+      ['owner', 'Ответственный'],
+      ['status', 'Статус'],
+      ['deadline', 'Дедлайн'],
+      ['automation', 'К автоматизации'],
+      ['x', 'Координата X'],
+      ['y', 'Координата Y'],
+    ],
+  });
+  diffNestedSubprocesses(entries, previous.processes || [], current.processes || []);
+  diffCollection(entries, previous.processEdges || [], current.processEdges || [], {
+    entityType: 'process-edge',
+    title: 'Связь процессов',
+    label: (item) => `${processTitleBySnapshot(item.from, current)} → ${processTitleBySnapshot(item.to, current)}`,
+    relatedProcessIds: (item) => [item.from, item.to].filter(Boolean),
+    fields: [
+      ['from', 'Откуда'],
+      ['to', 'Куда'],
+      ['label', 'Подпись'],
+    ],
+  });
+  diffCollection(entries, previous.systems?.nodes || [], current.systems?.nodes || [], {
+    entityType: 'system-node',
+    title: 'Системный узел',
+    label: (item) => item.t || item.id,
+    fields: [
+      ['t', 'Название'],
+      ['s', 'Подпись'],
+      ['body', 'Описание'],
+      ['path', 'Путь'],
+      ['cat', 'Категория'],
+      ['x', 'Координата X'],
+      ['y', 'Координата Y'],
+    ],
+  });
+  diffCollection(entries, previous.systems?.edges || [], current.systems?.edges || [], {
+    entityType: 'system-edge',
+    title: 'Связь систем',
+    label: (item) => `${item.f} → ${item.t}`,
+    fields: [
+      ['f', 'Откуда'],
+      ['t', 'Куда'],
+      ['l', 'Подпись'],
+    ],
+  });
+  return entries;
+}
+
+function diffNestedSubprocesses(entries, previousProcesses, currentProcesses) {
+  const previousMap = Object.fromEntries(previousProcesses.map((process) => [process.id, process]));
+  const currentMap = Object.fromEntries(currentProcesses.map((process) => [process.id, process]));
+  const allIds = new Set([...Object.keys(previousMap), ...Object.keys(currentMap)]);
+  allIds.forEach((processId) => {
+    diffCollection(entries, previousMap[processId]?.subprocesses || [], currentMap[processId]?.subprocesses || [], {
+      entityType: 'subprocess',
+      title: 'Подпроцесс',
+      label: (item) => item.title || item.id,
+      relatedProcessIds: () => [processId],
+      fields: [
+        ['title', 'Название'],
+        ['steps', 'Шаги'],
+        ['result', 'Результат'],
+        ['time', 'Время'],
+        ['weakness', 'Слабое место'],
+        ['optimization', 'Оптимизация'],
+        ['control', 'Контроль'],
+        ['owner', 'Ответственный'],
+        ['status', 'Статус'],
+        ['deadline', 'Дедлайн'],
+      ],
+    });
+  });
+}
+
+function diffCollection(entries, previousItems, currentItems, config) {
+  const previousMap = Object.fromEntries(previousItems.map((item) => [item.id, item]));
+  const currentMap = Object.fromEntries(currentItems.map((item) => [item.id, item]));
+  const ids = new Set([...Object.keys(previousMap), ...Object.keys(currentMap)]);
+  ids.forEach((id) => {
+    const before = previousMap[id];
+    const after = currentMap[id];
+    if (!before && after) {
+      entries.push(historyEntry(config, 'create', id, null, summarizeItem(after, config.fields), after));
+      return;
+    }
+    if (before && !after) {
+      entries.push(historyEntry(config, 'delete', id, summarizeItem(before, config.fields), null, before));
+      return;
+    }
+    config.fields.forEach(([field, label]) => {
+      const beforeValue = serializeHistoryValue(before?.[field]);
+      const afterValue = serializeHistoryValue(after?.[field]);
+      if (beforeValue === afterValue) return;
+      entries.push(historyEntry(config, 'update', id, before?.[field], after?.[field], after, label));
+    });
+  });
+}
+
+function historyEntry(config, action, entityId, oldValue, newValue, item, fieldLabel = '') {
+  return {
+    id: `history-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    entityType: config.entityType,
+    entityId,
+    entityLabel: config.label(item || { id: entityId }),
+    entityTitle: config.title,
+    action,
+    field: fieldLabel,
+    oldValue: historyValueLabel(oldValue),
+    newValue: historyValueLabel(newValue),
+    author: state.author || 'Пользователь',
+    createdAt: new Date().toISOString(),
+    relatedProcessIds: config.relatedProcessIds ? config.relatedProcessIds(item || { id: entityId }) : [],
+  };
+}
+
+function summarizeItem(item, fields) {
+  const summary = {};
+  fields.forEach(([field]) => {
+    if (item?.[field] !== undefined && item?.[field] !== '') summary[field] = item[field];
+  });
+  return summary;
+}
+
+function serializeHistoryValue(value) {
+  if (Array.isArray(value)) return JSON.stringify(value);
+  if (value && typeof value === 'object') return JSON.stringify(value);
+  return String(value ?? '');
+}
+
+function historyValueLabel(value) {
+  if (Array.isArray(value)) return value.join('\n');
+  if (value && typeof value === 'object') return Object.entries(value).map(([key, item]) => `${key}: ${item}`).join(', ');
+  if (value === true) return 'Да';
+  if (value === false) return 'Нет';
+  return String(value ?? '—');
+}
+
+function processTitleBySnapshot(id, data) {
+  return (data.processes || []).find((process) => process.id === id)?.title || id || '—';
+}
+
 function renderTables(main) {
   const wrap = el('<div class="tables"></div>');
   wrap.appendChild(tablePanel('Процессы', ['№', 'Название', 'Цель', 'Время', 'Слабые места', 'Рост', 'Ответственный', 'Статус', 'Дедлайн', 'Авто', ''], processRows(), addProcess));
-  wrap.appendChild(tablePanel('Подпроцессы', ['ID', 'Процесс', 'Название', 'Шаги', 'Результат', 'Время', 'Слабое место', 'Оптимизация', ''], subprocessRows(), () => addSubprocess(state.selectedProcessId || state.data.processes[0]?.id)));
+  wrap.appendChild(tablePanel('Подпроцессы', ['ID', 'Процесс', 'Название', 'Шаги', 'Результат', 'Время', 'Слабое место', 'Оптимизация', 'Ответственный', 'Статус', 'Дедлайн', ''], subprocessRows(), () => addSubprocess(state.selectedProcessId || state.data.processes[0]?.id)));
   main.appendChild(wrap);
+}
+
+function renderHistory(main) {
+  const panel = el('<section class="panel history-panel"><div class="section-head"><h2>История изменений</h2></div><div class="history-list"></div></section>');
+  const list = panel.querySelector('.history-list');
+  const entries = state.data.history || [];
+  if (!entries.length) {
+    list.appendChild(el('<div class="empty">История пока пуста. Записи появятся после сохранения изменений.</div>'));
+  } else {
+    entries.forEach((entry) => list.appendChild(renderHistoryItem(entry)));
+  }
+  main.appendChild(panel);
 }
 
 function tablePanel(title, headers, rows, onAdd) {
@@ -613,7 +850,8 @@ function subprocessRows() {
   const rows = [];
   visibleProcesses().forEach((process) => {
     (process.subprocesses || []).forEach((sub) => {
-      const tr = el(`<tr><td>${esc(sub.id)}</td><td>${esc(process.title)}</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`);
+      const tr = el(`<tr><td>${esc(sub.id)}</td><td>${esc(process.title)}</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`);
+      tr.classList.toggle('overdue', isSubprocessOverdue(sub));
       const cells = tr.querySelectorAll('td');
       cells[2].appendChild(compactInput(sub.title, (v) => { sub.title = v; }, 2, 16, 6));
       cells[3].appendChild(compactInput((sub.steps || []).join('\n'), (v) => {
@@ -623,7 +861,10 @@ function subprocessRows() {
       cells[5].appendChild(compactInput(sub.time, (v) => { sub.time = v; }, 2, 18, 6));
       cells[6].appendChild(compactInput(sub.weakness, (v) => { sub.weakness = v; }, 2, 18, 6));
       cells[7].appendChild(compactInput(sub.optimization, (v) => { sub.optimization = v; }, 2, 18, 6));
-      cells[8].appendChild(rowButton('Удалить', () => deleteSubprocess(process.id, sub.id), 'danger'));
+      cells[8].appendChild(compactInput(sub.owner, (v) => { sub.owner = v; }, 1, 18, 4));
+      cells[9].appendChild(compactInput(sub.status, (v) => { sub.status = v; }, 1, 18, 4));
+      cells[10].appendChild(compactInput(sub.deadline, (v) => { sub.deadline = v; }, 1, 18, 4));
+      cells[11].appendChild(rowButton('Удалить', () => deleteSubprocess(process.id, sub.id), 'danger'));
       rows.push(tr);
     });
   });
@@ -716,6 +957,48 @@ function edgeCreator(nodes) {
   return box;
 }
 
+function processEdgeCreator(process, nodes) {
+  const box = el(`<div class="edge-create">
+    <strong>Новая связь процесса</strong>
+    <label class="field compact-field"><span>Куда</span><select data-to></select></label>
+    <label class="field compact-field"><span>Подпись</span><input data-label></label>
+    <button data-add-edge>Добавить связь</button>
+  </div>`);
+  const to = box.querySelector('[data-to]');
+  nodes
+    .filter((node) => node.id !== process.id)
+    .forEach((node) => {
+      to.appendChild(el(`<option value="${esc(node.id)}">${esc(node.title || node.id)}</option>`));
+    });
+  box.querySelector('[data-add-edge]').addEventListener('click', () => addProcessEdge(process.id, to.value, box.querySelector('[data-label]').value));
+  return box;
+}
+
+function renderProcessEdgeControls(process) {
+  const section = el('<section class="process-edge-section"><h3>Связи процесса</h3></section>');
+  const nodes = state.data.processes || [];
+  if (nodes.length >= 2) {
+    section.appendChild(processEdgeCreator(process, nodes));
+  }
+  const edges = processEdgesForProcess(process.id);
+  if (!edges.length) {
+    section.appendChild(el('<div class="empty compact-empty">У процесса пока нет связей.</div>'));
+    return section;
+  }
+  const list = el('<div class="edge-list"></div>');
+  edges.forEach((entry) => {
+    const edge = entry.edge;
+    const row = el(`<div class="edge-row"><b>${esc(processTitleById(edge.from))} → ${esc(processTitleById(edge.to))}</b></div>`);
+    row.appendChild(selectField('Откуда', processEdgeOptions(), edge.from, (v) => { edge.from = v; }));
+    row.appendChild(selectField('Куда', processEdgeOptions(), edge.to, (v) => { edge.to = v; }));
+    row.appendChild(compactInput(edge.label || '', (v) => { edge.label = v; }, 1, 24, 3));
+    row.appendChild(rowButton('Удалить связь', () => deleteProcessEdge(entry.index), 'danger'));
+    list.appendChild(row);
+  });
+  section.appendChild(list);
+  return section;
+}
+
 function nextNumber(items, field = 'number') {
   return items.reduce((max, item) => Math.max(max, Number(item[field]) || 0), 0) + 1;
 }
@@ -744,6 +1027,9 @@ function normalizeProcesses() {
     normalizeComments(process.comments);
     (process.subprocesses || []).forEach((sub, subIndex) => {
       sub.id = sub.id || `${index + 1}.${subIndex + 1}`;
+      sub.owner ||= '';
+      sub.status ||= 'актуально';
+      sub.deadline ||= '';
       sub.comments ||= [];
       normalizeComments(sub.comments);
     });
@@ -764,6 +1050,8 @@ function normalizeData() {
   state.data.subtitle ||= '';
   state.data.flow ||= [];
   state.data.processes ||= [];
+  state.data.processEdges ||= [];
+  state.data.history ||= [];
   if (!PROCESS_FILTERS.some((filter) => filter.id === state.processFilter)) {
     state.processFilter = 'all';
     localStorage.setItem(VIEW_FILTER_KEY, state.processFilter);
@@ -773,6 +1061,7 @@ function normalizeData() {
     localStorage.setItem(VIEW_MODE_KEY, state.processFilterMode);
   }
   normalizeProcesses();
+  normalizeProcessEdges();
   const systems = ensureSystems();
   systems.nodes.forEach((node) => {
     node.id ||= uniqueId('node', new Set(systems.nodes.map((item) => item.id).filter(Boolean)));
@@ -782,6 +1071,20 @@ function normalizeData() {
     node.t ||= node.id;
   });
   systems.edges = systems.edges.filter((edge) => edge.f && edge.t);
+}
+
+function normalizeProcessEdges() {
+  const valid = new Set((state.data.processes || []).map((process) => process.id));
+  state.data.processEdges = (state.data.processEdges || []).map((edge, index) => {
+    edge.id ||= `pe-${index + 1}`;
+    edge.from ||= edge.f || '';
+    edge.to ||= edge.t || '';
+    edge.label ||= edge.l || '';
+    delete edge.f;
+    delete edge.t;
+    delete edge.l;
+    return edge;
+  }).filter((edge) => valid.has(edge.from) && valid.has(edge.to) && edge.from !== edge.to);
 }
 
 function addProcess() {
@@ -815,6 +1118,7 @@ function deleteProcess(processId) {
   if (!process) return;
   if (!confirm(`Удалить процесс «${process.title}» вместе с подпроцессами?`)) return;
   state.data.processes = state.data.processes.filter((item) => item.id !== processId);
+  state.data.processEdges = (state.data.processEdges || []).filter((edge) => edge.from !== processId && edge.to !== processId);
   state.selectedProcessId = state.data.processes[0]?.id || null;
   state.selectedSubprocessId = null;
   normalizeProcesses();
@@ -840,6 +1144,9 @@ function addSubprocess(processId) {
     weakness: '',
     optimization: '',
     control: '',
+    owner: '',
+    status: 'черновик',
+    deadline: '',
   };
   process.subprocesses.push(sub);
   state.selectedProcessId = process.id;
@@ -875,6 +1182,52 @@ function deleteSubprocess(processId, subprocessId) {
   state.selectedSubprocessId = null;
   markDirty();
   render();
+}
+
+function drawProcessLinks(svg) {
+  const processes = state.data.processes || [];
+  const edges = state.data.processEdges || [];
+  const byId = Object.fromEntries(processes.map((process) => [process.id, process]));
+  svg.innerHTML = '';
+  svg.setAttribute('viewBox', `0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`);
+  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+  const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+  marker.setAttribute('id', 'process-arrow');
+  marker.setAttribute('markerWidth', '12');
+  marker.setAttribute('markerHeight', '12');
+  marker.setAttribute('refX', '10');
+  marker.setAttribute('refY', '6');
+  marker.setAttribute('orient', 'auto-start-reverse');
+  const arrowPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  arrowPath.setAttribute('d', 'M 0 0 L 12 6 L 0 12 z');
+  arrowPath.setAttribute('fill', '#64748b');
+  marker.appendChild(arrowPath);
+  defs.appendChild(marker);
+  svg.appendChild(defs);
+  edges.forEach((edge) => {
+    const from = byId[edge.from];
+    const to = byId[edge.to];
+    if (!from || !to) return;
+    const x1 = (from.x || 0) + PROCESS_CARD_WIDTH / 2;
+    const y1 = (from.y || 0) + PROCESS_CARD_HEIGHT / 2;
+    const x2 = (to.x || 0) + PROCESS_CARD_WIDTH / 2;
+    const y2 = (to.y || 0) + PROCESS_CARD_HEIGHT / 2;
+    const mx = (x1 + x2) / 2;
+    const my = (y1 + y2) / 2 - 18;
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', `M ${x1} ${y1} Q ${mx} ${my} ${x2} ${y2}`);
+    path.setAttribute('class', 'process-edge');
+    path.setAttribute('marker-end', 'url(#process-arrow)');
+    svg.appendChild(path);
+    if (edge.label) {
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.setAttribute('x', String(mx));
+      text.setAttribute('y', String(my - 6));
+      text.setAttribute('class', 'process-edge-label');
+      text.textContent = edge.label;
+      svg.appendChild(text);
+    }
+  });
 }
 
 function renderSystems(main) {
@@ -987,6 +1340,25 @@ function selectedNode() {
   return (state.data.systems?.nodes || []).find((n) => n.id === state.selectedNodeId) || null;
 }
 
+function processTitleById(id) {
+  return state.data.processes.find((process) => process.id === id)?.title || id;
+}
+
+function processEdgeOptions() {
+  return (state.data.processes || []).map((process) => ({ id: process.id, title: process.title }));
+}
+
+function processEdgesForProcess(processId) {
+  return (state.data.processEdges || [])
+    .map((edge, index) => ({ edge, index }))
+    .filter(({ edge }) => edge.from === processId || edge.to === processId);
+}
+
+function ensureProcessEdges() {
+  state.data.processEdges ||= [];
+  return state.data.processEdges;
+}
+
 function ensureSystems() {
   state.data.systems ||= {};
   state.data.systems.nodes ||= [];
@@ -1040,6 +1412,29 @@ function addEdge(from, to, label) {
   render();
 }
 
+function addProcessEdge(from, to, label) {
+  const edges = ensureProcessEdges();
+  if (!from || !to || from === to) {
+    alert('Выберите два разных процесса для связи.');
+    return;
+  }
+  edges.push({
+    id: uniqueId(`pe-${Date.now().toString(36)}`, new Set(edges.map((edge) => edge.id))),
+    from,
+    to,
+    label: (label || '').trim(),
+  });
+  markDirty();
+  render();
+}
+
+function deleteProcessEdge(index) {
+  const edges = ensureProcessEdges();
+  edges.splice(index, 1);
+  markDirty();
+  render();
+}
+
 function deleteEdge(index) {
   const systems = ensureSystems();
   systems.edges.splice(index, 1);
@@ -1060,4 +1455,5 @@ function categoryColor(category) {
 }
 
 normalizeData();
+state.lastSavedData = clone(state.data);
 render();
